@@ -15,7 +15,8 @@ rxd_rptr	equ	0x9F00
 rxd_wptr	equ	0x9F01
 addr_l		equ	0x9F02
 addr_h		equ	0x9F03
-tmp			equ	0x9F04		;4 bytes
+byte_buff	equ 0x9F04
+tmp			equ	0x9F05		;4 bytes
 
 ;io ports
 UDR			equ	0x00
@@ -86,7 +87,10 @@ main_loop:
 		jp z, read
 		
 		cp 'w'
-		jp z, read
+		jp z, write
+		
+		cp 'm'
+		jp z, modify
 		
 		cp 'e'
 		jp z, execute
@@ -107,6 +111,11 @@ read:
 		jp main_loop
 		
 write:
+		call get_addr
+		;todo
+		jp main_loop
+		
+modify:
 		call get_addr
 		;todo
 		jp main_loop
@@ -160,22 +169,72 @@ get_addr_enter:
 		jr nz, get_addr_loop
 		
 		ld hl, tmp
-		ld c, (hl)
-		inc hl
 		ld b, (hl)
-		ld h, c
+		inc hl
+		ld c, (hl)
+		ld h, b
 		ld l, c
 		call hex2byte
 		ld (addr_h), a
 		
 		ld hl, tmp+2
-		ld c, (hl)
-		inc hl
 		ld b, (hl)
-		ld h, c
+		inc hl
+		ld c, (hl)
+		ld h, b
 		ld l, c
 		call hex2byte
 		ld (addr_l), a
+		
+		ld hl, new_line
+		rst 0x20
+		ret
+		
+get_byte:	
+		ld hl, byte_msg
+		rst 0x20
+		ld c, 0		;number of aquired digits
+		
+get_byte_loop:
+		ld a, 0
+		rst 0x30
+		cp BS
+		jr z, get_byte_bs
+		cp CR
+		jr z, get_byte_enter
+		ld b, a
+		ld a, c
+		cp 2
+		jr z, get_byte_loop
+		ld a, b
+		call ishex
+		jr c, get_byte_loop
+		inc c
+		rst 0x28
+		ld b, a
+		ld a, c
+		cp 0
+		jr z, get_byte_store_low
+		ld h, b
+		jr get_byte_loop
+get_byte_store_low
+		ld l, b
+		jr get_byte_loop
+get_byte_bs:
+		ld a, c
+		cp 0
+		jr z, get_byte_loop
+		ld a, BS
+		rst 0x28
+		dec c
+		jr get_byte_loop
+get_byte_enter:
+		ld a, c
+		cp 2
+		jr nz, get_byte_loop
+		
+		call hex2byte
+		ld (byte_buff), a
 		
 		ld hl, new_line
 		rst 0x20
@@ -313,4 +372,7 @@ invalid_msg:
 		
 address_msg:
 		db 'Input address (hex): ', 0
+
+byte_msg:
+		db 'Input byte (hex): ', 0
 		
