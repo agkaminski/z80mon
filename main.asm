@@ -23,7 +23,7 @@ tmp			equ	0x9F05		;4 bytes
 UDR			equ	0x00
 
 org 0x0000
-reset:	ld sp, 0x9F20
+reset:	ld sp, RAM_END
 		
 		ld a, 0
 		ld (rxd_rptr), a
@@ -33,18 +33,25 @@ reset:	ld sp, 0x9F20
 		im 1
 		ei
 		jp main
+
+org 0x0010		
+
+org 0x0018
 		
 ;print routine
 org 0x0020
 		jp print
+		db 'PRINT'
 		
 ;uart write routine
 org 0x0028
 		jp txd
+		db 'TXD', 0, 0
 
 ;uart read routine
 org 0x0030
 		jp rxd_pop
+		db 'RXD', 0, 0
 
 ;interrupt service routine
 org 0x0038
@@ -74,6 +81,10 @@ irq_buffer_full:
 		
 ;######################################
 
+main_done:
+		ld hl, done_msg
+		rst 0x20
+		jr main_loop
 main:
 		ld hl, welcome_msg
 		rst 0x20
@@ -106,6 +117,15 @@ main_loop:
 		
 		ld hl, invalid_msg
 		rst 0x20
+		ld b, a
+		ld a, 0x27	;'
+		rst 0x28
+		ld a, b
+		rst 0x28
+		ld a, 0x27	;'
+		rst 0x28
+		ld hl, new_line
+		rst 0x20
 		jr main_loop
 		
 ;######################################
@@ -118,68 +138,50 @@ read:
 		ld hl, read_len_msg
 		rst 0x20
 		call get_byte
-		jr c, main_loop		;user aborted read
-		
-		ld hl, new_line
-		rst 0x20
+		jr c, main_done		;user aborted
 		
 		ld a, (addr_h)
-		ld h, l
+		ld h, a
 		ld a, (addr_l)
-		and 0x0F			;allign addres for
-		ld l, a				;better readability
+		and 0xF0
+		ld l, a
+		
 		ld a, (byte_buff)
 		ld d, a
+		ld a, 0
+		ld e, a
 		
-read_master_loop:
+read_loop:	
 		ld a, d
 		cp 0
-		jr read_done
-		
-		;print begin address
-		ld a, h
-		call byte2hex
-		ld a, b
-		rst 0x28
-		ld a, c
-		rst 0x28
-		ld a, l
-		call byte2hex
-		ld a, b
-		rst 0x28
-		ld a, c
-		rst 0x28
-		
-		ld a, d
-		ld e, d
-		
-		cp 17
-		jr c, read_byte_loop
-		ld e, 16
-read_byte_loop:
-		ld a, SPACE
-		rst 0x28
-
-		ld a, (hl)
-		inc hl
-		dec e
-		
-		call byte2hex
-		ld a, b
-		rst 0x28
-		ld a, c
-		rst 0x28
+		jp z, main_done
+		dec a
+		ld d, a
 		
 		ld a, e
 		cp 0
-		jr nz, read_byte_loop
-		jr read_master_loop
+		call z, print_addr
 		
-read_done:
-		ld hl, new_line
-		rst 0x20
+		ld a, e
+		cp 0
+		jr nz, read_no_new_line
+		ld a, 16
+read_no_new_line:
+		dec a
+		ld e, a
 		
-		jp main_loop
+		ld a, (hl)
+		inc hl
+		call byte2hex
+		
+		ld a, b
+		rst 0x28
+		ld a, c
+		rst 0x28
+		ld a, SPACE
+		rst 0x28
+		
+		jr read_loop
 
 ;######################################
 		
@@ -187,42 +189,27 @@ write:
 		ld hl, write_addr_msg
 		rst 0x20
 		call get_addr
-		
-		ld hl, new_line
-		rst 0x20
-		
+
 		ld a, (addr_h)
-		ld h, l
+		ld h, a
 		ld a, (addr_l)
 		ld l, a	
 		
 write_loop:
 		;print begin address
-		ld a, h
-		call byte2hex
-		ld a, b
-		rst 0x28
-		ld a, c
-		rst 0x28
-		ld a, l
-		call byte2hex
-		ld a, b
-		rst 0x28
-		ld a, c
-		rst 0x28
+		call print_addr
 		
-		ld a, 0
-		ld c, a
+		ld c, 0
+		
+		push hl
 		call get_byte_loop		;skip msg print
-		jp c, main_loop			;user aborted
+		pop hl
+		jp c, main_done			;user aborted
 		
 		ld a, (byte_buff)
 		ld (hl), a
 		inc hl
-		ld a, CR
-		rst 0x28
-		ld a, LF
-		rst 0x28
+		
 		jr write_loop
 		
 ;######################################
@@ -335,7 +322,7 @@ get_byte_loop:
 		rst 0x28
 		ld b, a
 		ld a, c
-		cp 0
+		cp 2
 		jr z, get_byte_store_low
 		ld h, b
 		jr get_byte_loop
@@ -365,12 +352,36 @@ get_byte_enter:
 		
 		ld hl, new_line
 		rst 0x20
+		scf
 		ccf
 		ret
 		
 ;######################################
 		
 ;general purpose routines
+
+print_addr:
+		ld a, CR
+		rst 0x28
+		ld a, LF
+		rst 0x28
+		ld a, h
+		call byte2hex
+		ld a, b
+		rst 0x28
+		ld a, c
+		rst 0x28
+		ld a, l
+		call byte2hex
+		ld a, b
+		rst 0x28
+		ld a, c
+		rst 0x28
+		ld a, SPACE
+		rst 0x28
+		ret
+
+;######################################
 
 ;converts value in a to hex
 ;returns 2 ascii hex character in bc (b, c) == (high, low)
@@ -409,6 +420,7 @@ ishex:
 		jr c, ishex_no
 		cp ':'
 		jr nc, ishex_no_digit
+		scf
 		ccf
 		ret
 ishex_no_digit:
@@ -416,6 +428,7 @@ ishex_no_digit:
 		jr c, ishex_no
 		cp 'G'
 		jr nc, ishex_lower
+		scf
 		ccf
 		ret
 ishex_lower
@@ -423,6 +436,7 @@ ishex_lower
 		jr c, ishex_no
 		cp 'g'
 		jr nc, ishex_no
+		scf
 		ccf
 		ret
 ishex_no:
