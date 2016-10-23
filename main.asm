@@ -7,6 +7,7 @@ CR			equ	0x0D
 LF			equ	0x0A
 TAB			equ	0x09
 BS			equ	0x7F
+SPACE		equ	0x20
 
 ;variables
 rxd_buff	equ	0x9E00
@@ -70,6 +71,8 @@ irq_buffer_full:
 		pop af
 		ei
 		ret
+		
+;######################################
 
 main:
 		ld hl, welcome_msg
@@ -104,30 +107,145 @@ main_loop:
 		ld hl, invalid_msg
 		rst 0x20
 		jr main_loop
+		
+;######################################
 
 read:
+		ld hl, read_addr_msg
+		rst 0x20
 		call get_addr
-		;todo
+		
+		ld hl, read_len_msg
+		rst 0x20
+		call get_byte
+		jr c, main_loop		;user aborted read
+		
+		ld hl, new_line
+		rst 0x20
+		
+		ld a, (addr_h)
+		ld h, l
+		ld a, (addr_l)
+		and 0x0F			;allign addres for
+		ld l, a				;better readability
+		ld a, (byte_buff)
+		ld d, a
+		
+read_master_loop:
+		ld a, d
+		cp 0
+		jr read_done
+		
+		;print begin address
+		ld a, h
+		call byte2hex
+		ld a, b
+		rst 0x28
+		ld a, c
+		rst 0x28
+		ld a, l
+		call byte2hex
+		ld a, b
+		rst 0x28
+		ld a, c
+		rst 0x28
+		
+		ld a, d
+		ld e, d
+		
+		cp 17
+		jr c, read_byte_loop
+		ld e, 16
+read_byte_loop:
+		ld a, SPACE
+		rst 0x28
+
+		ld a, (hl)
+		inc hl
+		dec e
+		
+		call byte2hex
+		ld a, b
+		rst 0x28
+		ld a, c
+		rst 0x28
+		
+		ld a, e
+		cp 0
+		jr nz, read_byte_loop
+		jr read_master_loop
+		
+read_done:
+		ld hl, new_line
+		rst 0x20
+		
 		jp main_loop
+
+;######################################
 		
 write:
+		ld hl, write_addr_msg
+		rst 0x20
 		call get_addr
-		;todo
-		jp main_loop
+		
+		ld hl, new_line
+		rst 0x20
+		
+		ld a, (addr_h)
+		ld h, l
+		ld a, (addr_l)
+		ld l, a	
+		
+write_loop:
+		;print begin address
+		ld a, h
+		call byte2hex
+		ld a, b
+		rst 0x28
+		ld a, c
+		rst 0x28
+		ld a, l
+		call byte2hex
+		ld a, b
+		rst 0x28
+		ld a, c
+		rst 0x28
+		
+		ld a, 0
+		ld c, a
+		call get_byte_loop		;skip msg print
+		jp c, main_loop			;user aborted
+		
+		ld a, (byte_buff)
+		ld (hl), a
+		inc hl
+		ld a, CR
+		rst 0x28
+		ld a, LF
+		rst 0x28
+		jr write_loop
+		
+;######################################
 		
 modify:
 		call get_addr
 		;todo
 		jp main_loop
 		
+;######################################
+		
 execute:
 		call get_addr
 		;todo
 		jp main_loop
 
+;######################################
+
 intelhex:
 		;todo
 		jp main_loop
+		
+;######################################
 
 get_addr:	
 		ld hl, address_msg
@@ -190,6 +308,8 @@ get_addr_enter:
 		rst 0x20
 		ret
 		
+;######################################
+		
 get_byte:	
 		ld hl, byte_msg
 		rst 0x20
@@ -202,6 +322,8 @@ get_byte_loop:
 		jr z, get_byte_bs
 		cp CR
 		jr z, get_byte_enter
+		cp 'q'
+		jr z, get_byte_aborted
 		ld b, a
 		ld a, c
 		cp 2
@@ -217,6 +339,11 @@ get_byte_loop:
 		jr z, get_byte_store_low
 		ld h, b
 		jr get_byte_loop
+get_byte_aborted:
+		ld hl, abort_msg
+		rst 0x20
+		scf
+		ret
 get_byte_store_low
 		ld l, b
 		jr get_byte_loop
@@ -238,10 +365,43 @@ get_byte_enter:
 		
 		ld hl, new_line
 		rst 0x20
+		ccf
 		ret
+		
+;######################################
 		
 ;general purpose routines
 
+;converts value in a to hex
+;returns 2 ascii hex character in bc (b, c) == (high, low)
+byte2hex:
+		ld b, a
+		call nibble2hex
+		ld c, a
+		ld a, b
+		srl a
+		srl a
+		srl a
+		srl a
+		call nibble2hex
+		ld b, a
+		ret
+
+;convers nibble to hex
+;in a, out a
+nibble2hex:
+		and 0x0F
+		cp 10
+		jr c, nibble2hex_digit
+		sub 10
+		add a, 'A'
+		ret
+nibble2hex_digit:
+		add a, '0'
+		ret
+		
+;######################################
+		
 ;checks if digit is valid hexadecimal
 ;sets carry if not
 ishex:
@@ -268,6 +428,8 @@ ishex_lower
 ishex_no:
 		scf
 		ret
+		
+;######################################
 
 ;reads hexadecimal value (in HL) to byte (to A)
 hex2byte:
@@ -301,6 +463,8 @@ hex2nibble_up:
 		sub 'A'
 		add a, 10
 		ret
+		
+;######################################
 
 ;pop received byte from the buffer
 ;if a == 0 wait for data if the buffer is empty
@@ -336,11 +500,15 @@ rxd_pop_empty:
 		jr nz, rxd_pop_end
 		halt	;wait for data
 		jr rxd_pop_loop
+		
+;######################################
 
 ;sends byte in a
 txd:
 		out (UDR), a
 		ret
+		
+;######################################
 
 ;prints string till terminator (\0)
 ;pointer to the string in HL
@@ -356,6 +524,8 @@ print_loop:
 print_end:
 		pop af
 		ret
+		
+;######################################
 		
 ;constants storage
 welcome_msg:
@@ -375,4 +545,22 @@ address_msg:
 
 byte_msg:
 		db 'Input byte (hex): ', 0
+		
+done_msg:
+		db CR, LF, 'Done.', CR, LF, 0
+		
+abort_msg:
+		db CR, LF, 'Aborted.', CR, LF, 0
+
+read_addr_msg:
+		db 'Provide start address for read', CR, LF, 0
+		
+read_len_msg:
+		db 'Provide number of bytes to read', CR, LF, 0
+		
+write_addr_msg:
+		db 'Provide start address for write', CR, LF, 0
+		
+write_len_msg:
+		db 'Provide number of bytes to write', CR, LF, 0
 		
