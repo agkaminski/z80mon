@@ -152,12 +152,6 @@ read:
 		ld e, a
 		
 read_loop:	
-		ld a, d
-		cp 0
-		jp z, main_done
-		dec a
-		ld d, a
-		
 		ld a, e
 		cp 0
 		call z, print_addr
@@ -180,6 +174,12 @@ read_no_new_line:
 		rst 0x28
 		ld a, SPACE
 		rst 0x28
+		
+		ld a, d
+		dec a
+		cp 0
+		jp z, main_done
+		ld d, a
 		
 		jr read_loop
 
@@ -215,22 +215,129 @@ write_loop:
 ;######################################
 		
 modify:
+		ld hl, mod_addr_msg
+		rst 0x20
 		call get_addr
-		;todo
-		jp main_loop
+
+		ld a, (addr_h)
+		ld h, a
+		ld a, (addr_l)
+		ld l, a	
+		
+mod_loop:
+		;print begin address
+		call print_addr
+		
+		ld a, (hl)
+		
+		push hl
+		call byte2hex
+		ld h, b
+		ld l, c
+		ld a, b
+		rst 0x28
+		ld a, c
+		rst 0x28
+		ld c, 2
+		
+		call get_byte_loop		;skip msg print
+		pop hl
+		jp c, main_done			;user aborted
+		
+		ld a, (byte_buff)
+		ld (hl), a
+		inc hl
+		
+		jr mod_loop
 		
 ;######################################
 		
 execute:
+		ld hl, exe_addr_msg
+		rst 0x20
 		call get_addr
-		;todo
-		jp main_loop
+		
+		ld a, (addr_h)
+		ld h, a
+		ld a, (addr_l)
+		ld l, a
+		
+		jp (hl)
 
 ;######################################
 
-intelhex:
-		;todo
+intelhex:		
+		;data length
+		call intelhex_rxd
+		ld b, a
+		ld c, a
+		
+		;address
+		call intelhex_rxd
+		ld d, a
+		add a, c
+		ld c, a
+		call intelhex_rxd
+		ld e, a
+		add a, c
+		ld c, a
+		
+		;record type
+		call intelhex_rxd
+		cp 1		;last record
+		jr z, intelhex_done
+		cp 0		;data record
+		jp nz, intelhex_type_error
+		add a, c
+		ld c, a
+		
+intelhex_loop:
+		call intelhex_rxd
+		ld (de), a
+		inc de
+		add a, c
+		ld c, a
+		djnz intelhex_loop
+		
+		call intelhex_rxd
+		add a, c
+		cp 0
+		jp nz, intelhex_checksum_error
+		
+		jp main_done
+
+intelhex_type_error:
+		ld hl, type_error_msg
+		rst 0x20
 		jp main_loop
+
+intelhex_checksum_error:
+		ld hl, checksum_error_msg
+		rst 0x20
+		jp main_loop
+		
+intelhex_char_error:
+		ld hl, char_error
+		rst 0x20
+		jp main_loop
+		
+intelhex_done:
+		call intelhex_rxd	;flush last byte
+		jp main_done
+
+intelhex_rxd:
+		ld a, 0
+		rst 0x30
+		call ishex
+		jr c, intelhex_char_error
+		ld h, a
+		ld a, 0
+		rst 0x30
+		call ishex
+		jr c, intelhex_char_error
+		ld l, a
+		call hex2byte
+		ret
 		
 ;######################################
 
@@ -543,38 +650,57 @@ print_end:
 		
 ;constants storage
 welcome_msg:
-		db 'Z80simple system monitor', CR, LF, 'A.Kaminski 2016', CR, LF, 0
+db 'Z80simple system monitor', CR, LF
+db 'A.Kaminski 2016', CR, LF, 0
 
 menu_msg:
-		db 'Avaiable options:', CR, LF, TAB, 'h - this help', CR, LF, TAB, 'r - read memory', CR, LF, TAB, 'w - write memory', CR, LF, TAB, 'e - execute program', CR, LF, TAB, ': - Intel HEX (just send line)', CR, LF, 0
+db 'Avaiable options:'
+db CR, LF, TAB, 'h - this help'
+db CR, LF, TAB, 'r - read memory'
+db CR, LF, TAB, 'w - write memory'
+db CR, LF, TAB, 'm - modify memory'
+db CR, LF, TAB, 'e - execute program'
+db CR, LF, TAB, ': - Intel HEX (just send line)'
+db CR, LF, 0
 
 new_line:
-		db CR, LF, 0
+db CR, LF, 0
 	
 invalid_msg:
-		db 'Invalid choice: ', CR, LF, 0
+db 'Invalid choice: ', CR, LF, 0
 		
 address_msg:
-		db 'Input address (hex): ', 0
+db 'Input address (hex): ', 0
 
 byte_msg:
-		db 'Input byte (hex): ', 0
+db 'Input byte (hex): ', 0
 		
 done_msg:
-		db CR, LF, 'Done.', CR, LF, 0
+db CR, LF, 'Done.', CR, LF, 0
 		
 abort_msg:
-		db CR, LF, 'Aborted.', CR, LF, 0
+db CR, LF, 'Aborted.', CR, LF, 0
 
 read_addr_msg:
-		db 'Provide start address for read', CR, LF, 0
+db 'Provide start address for read', CR, LF, 0
 		
 read_len_msg:
-		db 'Provide number of bytes to read', CR, LF, 0
+db 'Provide number of bytes to read', CR, LF, 0
 		
 write_addr_msg:
-		db 'Provide start address for write', CR, LF, 0
+db 'Provide start address for write', CR, LF, 0
 		
-write_len_msg:
-		db 'Provide number of bytes to write', CR, LF, 0
+mod_addr_msg:
+db 'Provide start address for modify', CR, LF, 0
 		
+exe_addr_msg:
+db 'Provice start address for execution', CR, LF, 0
+		
+type_error_msg:
+db CR, LF, 'Unexpectected IntelHEX record type.', CR, LF, 0
+
+checksum_error_msg:
+db CR, LF, 'Checksum error.', CR, LF, 0
+		
+char_error:
+db CR, LF, 'Received non-hex character.', CR, LF, 0
