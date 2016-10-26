@@ -8,6 +8,8 @@ LF			equ	0x0A
 TAB			equ	0x09
 BS			equ	0x7F
 SPACE		equ	0x20
+XOFF		equ 0x13
+XON			equ 0x11
 
 ;variables
 rxd_buff	equ	0x9E00
@@ -17,6 +19,7 @@ rxd_wptr	equ	0x9F01
 addr_l		equ	0x9F02
 addr_h		equ	0x9F03
 byte_buff	equ 0x9F04
+isxon		equ 0x9F04
 tmp			equ	0x9F05		;4 bytes
 
 ;io ports
@@ -29,12 +32,13 @@ reset:	ld sp, RAM_END
 		ld (rxd_rptr), a
 		ld (rxd_wptr), a
 		
+		ld a, XOFF
+		rst 0x28
+		
 		;set up interrupts
 		im 1
 		ei
-		jp main
-
-org 0x0010		
+		jp main		
 
 org 0x0018
 		
@@ -106,7 +110,7 @@ main_loop:
 		cp 'm'
 		jp z, modify
 		
-		cp 'e'
+		cp 'x'
 		jp z, execute
 
 		cp ':'
@@ -266,7 +270,7 @@ execute:
 
 ;######################################
 
-intelhex:		
+intelhex:
 		;data length
 		call intelhex_rxd
 		ld b, a
@@ -601,6 +605,10 @@ rxd_pop_loop:
 		ld a, (rxd_rptr)
 		cp l
 		jr z, rxd_pop_empty
+		ld b, a
+		ld a, XOFF
+		rst 0x28
+		ld a, b
 		ld h, high rxd_buff
 		ld l, a
 		ld a, (hl)
@@ -610,7 +618,7 @@ rxd_pop_loop:
 		ld a, l
 		ld (rxd_rptr), a
 		ld a, b
-rxd_pop_end:		
+rxd_pop_end:	
 		pop hl
 		pop bc
 		ret
@@ -619,6 +627,8 @@ rxd_pop_empty:
 		ld a, c
 		cp 0
 		jr nz, rxd_pop_end
+		ld a, XON
+		rst 0x28
 		halt	;wait for data
 		jr rxd_pop_loop
 		
@@ -650,7 +660,7 @@ print_end:
 		
 ;constants storage
 welcome_msg:
-db 'Z80simple system monitor', CR, LF
+db CR, LF, 'Z80simple system monitor', CR, LF
 db 'A.Kaminski 2016', CR, LF, 0
 
 menu_msg:
@@ -659,7 +669,7 @@ db CR, LF, TAB, 'h - this help'
 db CR, LF, TAB, 'r - read memory'
 db CR, LF, TAB, 'w - write memory'
 db CR, LF, TAB, 'm - modify memory'
-db CR, LF, TAB, 'e - execute program'
+db CR, LF, TAB, 'x - execute program'
 db CR, LF, TAB, ': - Intel HEX (just send line)'
 db CR, LF, 0
 
