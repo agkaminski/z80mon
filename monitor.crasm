@@ -1,648 +1,645 @@
 CPU Z80
 
-ROM_BEGIN	equ 	0x0000
-ROM_END		equ	0x1FFF
-RAM_BEGIN	equ	0x8000
-RAM_END		equ	0x9FFF
+ROM_BEGIN		equ 0x0000
+ROM_END			equ	0x1FFF
+RAM_BEGIN		equ	0x8000
+RAM_END			equ	0x9FFF
 
-CR		equ	0x0D
-LF		equ	0x0A
-TAB		equ	0x09
-BS		equ	0x7F
-SPACE		equ	0x20
-XOFF		equ 	0x13
-XON		equ 	0x11
-
-;variables
-rxd_buff	equ	0x9E00
-
-rxd_rptr	equ	0x9F00
-rxd_wptr	equ	0x9F01
-addr_l		equ	0x9F02
-addr_h		equ	0x9F03
-byte_buff	equ 	0x9F04
-isxon		equ 	0x9F04
-tmp		equ	0x9F05		;4 bytes
+CR				equ	0x0D
+LF				equ	0x0A
+TAB				equ	0x09
+BS				equ	0x7F
+SPACE			equ	0x20
+XOFF			equ 0x13
+XON				equ 0x11
 
 ;io ports
-UDR		equ	0x00
+UDR				equ	0x00
 
 * = 0x0000
-reset		ld sp, RAM_END
-		
-		ld a, 0
-		ld (rxd_rptr), a
-		ld (rxd_wptr), a
-		
-		ld a, XOFF
-		rst 0x28
-		
-		;set up interrupts
-		im 1
-		ei
-		jp main		
+reset			ld sp, RAM_END
+			
+				xor a
+				ld (rxd_rptr), a
+				ld (rxd_wptr), a
+			
+				ld a, XOFF
+				rst 0x28
+			
+				im 1
+				ei
+				jp main
 
+;free slot for rst 0x18 routine
 * = 0x0018
 		
 ;print routine
 * = 0x0020
-		jp print
-		asc "PRINT"
+				jp print
+				asc "PRINT"
 		
 ;uart write routine
 * = 0x0028
-		jp txd
-		asc "TXD\0\0"
+				jp txd
+				asc "TXD\0\0"
 
 ;uart read routine
 * = 0x0030
-		jp rxd_pop
-		asc "RXD\0\0"
+				jp rxd_pop
+				asc "RXD\0\0"
 
 ;interrupt service routine
 * = 0x0038
-irq		push af
-		push bc
-		push hl
-		in a, (UDR)
-		ld b, a
-		ld h, 0x9E
-		ld a, (rxd_rptr)
-		ld l, a
-		ld a, (rxd_wptr)
-		inc a
-		cp l
-		jr z, irq_buffer_full
-		dec a
-		ld l, a
-		ld (hl), b
-		inc a
-		ld (rxd_wptr), a
-irq_buffer_full	pop hl
-		pop bc
-		pop af
-		ei
-		ret
+irq				exx
+				in a, (UDR)
+				ld b, a
+				ld h, (rxd_buff>>8) && 0xFF
+				ld a, (rxd_rptr)
+				ld l, a
+				ld a, (rxd_wptr)
+				inc a
+				cp l
+				jr z, irq_buffer_full
+				dec a
+				ld l, a
+				ld (hl), b
+				inc a
+				ld (rxd_wptr), a
+irq_buffer_full	exx
+				ei
+				ret
 		
 ;######################################
 
-main_done	ld hl, done_msg
-		rst 0x20
-		jr main_loop
-main		ld hl, welcome_msg
-		rst 0x20
+main_done		ld hl, done_msg
+				rst 0x20
+				jr main_loop
+main			ld hl, welcome_msg
+				rst 0x20
+			
+main_help		ld hl, menu_msg
+				rst 0x20
 		
-main_help	ld hl, menu_msg
-		rst 0x20
-		
-main_loop	ld a, 0
-		rst 0x30
-		
-		cp 'r'
-		jp z, read
-		
-		cp 'w'
-		jp z, write
-		
-		cp 'm'
-		jp z, modify
-		
-		cp 'x'
-		jp z, execute
+main_loop		xor a
+				rst 0x30
+				
+				cp 'r'
+				jp z, read
+				
+				cp 'w'
+				jp z, write
+				
+				cp 'm'
+				jp z, modify
+				
+				cp 'x'
+				jp z, execute
 
-		cp ':'
-		jp z, intelhex
-		
-		cp 'h'
-		jr z, main_help
-		
-		ld hl, invalid_msg
-		rst 0x20
-		ld b, a
-		ld a, 0x27	;'
-		rst 0x28
-		ld a, b
-		rst 0x28
-		ld a, 0x27	;'
-		rst 0x28
-		ld hl, new_line
-		rst 0x20
-		jr main_loop
+				cp ':'
+				jp z, intelhex
+				
+				cp 'h'
+				jr z, main_help
+				
+				ld hl, invalid_msg
+				rst 0x20
+				ld b, a
+				ld a, 0x27	;'
+				rst 0x28
+				ld a, b
+				rst 0x28
+				ld a, 0x27	;'
+				rst 0x28
+				ld hl, new_line
+				rst 0x20
+				jr main_loop
 		
 ;######################################
 
-read		ld hl, read_addr_msg
-		rst 0x20
-		call get_addr
+read			ld hl, addr_msg
+				rst 0x20
+				ld hl, read_msg
+				rst 0x20
+				call get_addr
+				
+				ld hl, read_len_msg
+				rst 0x20
+				call get_byte
+				jr c, main_done		;user aborted
+				
+				ld a, (addr+1)
+				ld h, a
+				ld a, (addr)
+				and 0xF0			;align to 16 bytes
+				ld l, a
+				
+				ld a, (byte_buff)
+				ld d, a
+				xor a
+				ld e, a
 		
-		ld hl, read_len_msg
-		rst 0x20
-		call get_byte
-		jr c, main_done		;user aborted
-		
-		ld a, (addr_h)
-		ld h, a
-		ld a, (addr_l)
-		and 0xF0
-		ld l, a
-		
-		ld a, (byte_buff)
-		ld d, a
-		ld a, 0
-		ld e, a
-		
-read_loop	ld a, e
-		cp 0
-		call z, print_addr
-		
-		ld a, e
-		cp 0
-		jr nz, read_no_nl
-		ld a, 16
-read_no_nl	dec a
-		ld e, a
-		
-		ld a, (hl)
-		inc hl
-		call byte2hex
-		
-		ld a, b
-		rst 0x28
-		ld a, c
-		rst 0x28
-		ld a, SPACE
-		rst 0x28
-		
-		ld a, d
-		dec a
-		cp 0
-		jp z, main_done
-		ld d, a
-		
-		jr read_loop
+read_loop		ld a, e
+				cp 0
+				call z, print_addr
+				
+				ld a, e
+				cp 0
+				jr nz, read_no_nl
+				ld a, 16
+read_no_nl		dec a
+				ld e, a
+				
+				ld a, (hl)
+				inc hl
+				call byte2hex
+				
+				ld a, b
+				rst 0x28
+				ld a, c
+				rst 0x28
+				ld a, SPACE
+				rst 0x28
+				
+				ld a, d
+				dec a
+				cp 0
+				jp z, main_done
+				ld d, a
+				
+				jr read_loop
 
 ;######################################
 		
-write		ld hl, write_addr_msg
-		rst 0x20
-		call get_addr
+write			ld hl, addr_msg
+				rst 0x20
+				ld hl, write_msg
+				rst 0x20
+				call get_addr
 
-		ld a, (addr_h)
-		ld h, a
-		ld a, (addr_l)
-		ld l, a	
+				ld a, (addr+1)
+				ld h, a
+				ld a, (addr)
+				ld l, a	
 		
-write_loop	call print_addr
-		
-		ld c, 0
-		
-		push hl
-		call get_byte_loop		;skip msg print
-		pop hl
-		jp c, main_done			;user aborted
-		
-		ld a, (byte_buff)
-		ld (hl), a
-		inc hl
-		
-		jr write_loop
+write_loop		call print_addr
+				
+				push hl
+				ld c, 0
+				call get_byte_loop		;skip msg print
+				pop hl
+				jp c, main_done			;user aborted
+				
+				ld a, (byte_buff)
+				ld (hl), a
+				inc hl
+				
+				jr write_loop
 		
 ;######################################
 		
-modify		ld hl, mod_addr_msg
-		rst 0x20
-		call get_addr
+modify			ld hl, addr_msg
+				rst 0x20
+				ld hl, mod_msg
+				rst 0x20
+				call get_addr
 
-		ld a, (addr_h)
-		ld h, a
-		ld a, (addr_l)
-		ld l, a	
+				ld a, (addr+1)
+				ld h, a
+				ld a, (addr)
+				ld l, a	
 		
-mod_loop	call print_addr
-		
-		ld a, (hl)
-		
-		push hl
-		call byte2hex
-		ld h, b
-		ld l, c
-		ld a, b
-		rst 0x28
-		ld a, c
-		rst 0x28
-		ld c, 2
-		
-		call get_byte_loop		;skip msg print
-		pop hl
-		jp c, main_done			;user aborted
-		
-		ld a, (byte_buff)
-		ld (hl), a
-		inc hl
-		
-		jr mod_loop
+mod_loop		call print_addr
+				
+				ld a, (hl)
+				
+				push hl
+				call byte2hex
+				ld h, b
+				ld l, c
+				ld a, b
+				rst 0x28
+				ld a, c
+				rst 0x28
+				ld c, 2
+				call get_byte_loop		;skip msg print
+				pop hl
+				jp c, main_done			;user aborted
+				
+				ld a, (byte_buff)
+				ld (hl), a
+				inc hl
+				
+				jr mod_loop
 		
 ;######################################
 		
-execute		ld hl, exe_addr_msg
-		rst 0x20
-		call get_addr
-		
-		ld a, (addr_h)
-		ld h, a
-		ld a, (addr_l)
-		ld l, a
-		
-		jp (hl)
+execute			ld hl, addr_msg
+				rst 0x20
+				ld hl, exe_msg
+				rst 0x20
+				call get_addr
+				
+				ld a, (addr+1)
+				ld h, a
+				ld a, (addr)
+				ld l, a
+				
+				jp (hl)
 
 ;######################################
 
-intelhex	call intelhex_rxd
-		ld b, a
-		ld c, a
-		
-		;address
-		call intelhex_rxd
-		ld d, a
-		add a, c
-		ld c, a
-		call intelhex_rxd
-		ld e, a
-		add a, c
-		ld c, a
-		
-		;record type
-		call intelhex_rxd
-		cp 1		;last record
-		jr z, intelhex_done
-		cp 0		;data record
-		jp nz, intelhex_type_e
-		add a, c
-		ld c, a
+intelhex		call intelhex_rxd
+				ld b, a
+				ld c, a
+				
+				;address
+				call intelhex_rxd
+				ld d, a
+				add a, c
+				ld c, a
+				call intelhex_rxd
+				ld e, a
+				add a, c
+				ld c, a
+				
+				;record type
+				call intelhex_rxd
+				cp 1		;last record
+				jr z, intelhex_done
+				cp 0		;data record
+				jp nz, intelhex_type_e
+				add a, c
+				ld c, a
 		
 intelhex_loop	call intelhex_rxd
-		ld (de), a
-		inc de
-		add a, c
-		ld c, a
-		djnz intelhex_loop
-		
-		call intelhex_rxd
-		add a, c
-		cp 0
-		jp nz, intelhex_cs_e
-		
-		jp main_done
+				ld (de), a
+				inc de
+				add a, c
+				ld c, a
+				djnz intelhex_loop
+				
+				call intelhex_rxd
+				add a, c
+				cp 0
+				jp nz, intelhex_cs_e
+				
+				jp main_done
 
 intelhex_type_e	ld hl, type_error_msg
-		rst 0x20
-		jp main_loop
+				rst 0x20
+				jp main_loop
 
-intelhex_cs_e	ld hl, checksum_error_msg
-		rst 0x20
-		jp main_loop
+intelhex_cs_e	ld hl, cs_error_msg
+				rst 0x20
+				jp main_loop
 		
 intelhex_char_e	ld hl, char_error
-		rst 0x20
-		jp main_loop
+				rst 0x20
+				jp main_loop
 		
 intelhex_done	call intelhex_rxd	;flush last byte
-		jp main_done
+				jp main_done
 
-intelhex_rxd	ld a, 0
-		rst 0x30
-		call ishex
-		jr c, intelhex_char_e
-		ld h, a
-		ld a, 0
-		rst 0x30
-		call ishex
-		jr c, intelhex_char_e
-		ld l, a
-		call hex2byte
-		ret
+intelhex_rxd	xor a
+				rst 0x30
+				call ishex
+				jr c, intelhex_char_e
+				ld h, a
+				xor a
+				rst 0x30
+				call ishex
+				jr c, intelhex_char_e
+				ld l, a
+				call hex2byte
+				ret
 		
 ;######################################
 
-get_addr	ld hl, address_msg
-		rst 0x20
-		ld c, 0		;number of aquired digits
-		ld hl, tmp
+get_addr		ld hl, address_msg
+				rst 0x20
+				ld c, 0		;number of aquired digits
+				ld hl, tmp
 		
-get_addr_loop	ld a, 0
-		rst 0x30
-		cp BS
-		jr z, get_addr_bs
-		cp CR
-		jr z, get_addr_enter
-		ld b, a
-		ld a, c
-		cp 4
-		jr z, get_addr_loop
-		ld a, b
-		call ishex
-		jr c, get_addr_loop
-		inc c
-		rst 0x28
-		ld (hl), a
-		inc hl
-		jr get_addr_loop
-get_addr_bs	ld a, c
-		cp 0
-		jr z, get_addr_loop
-		ld a, BS
-		rst 0x28
-		dec c
-		dec hl
-		jr get_addr_loop
+get_addr_loop	xor a
+				rst 0x30
+				cp BS
+				jr z, get_addr_bs
+				cp CR
+				jr z, get_addr_enter
+				ld b, a
+				ld a, c
+				cp 4
+				jr z, get_addr_loop
+				ld a, b
+				call ishex
+				jr c, get_addr_loop
+				inc c
+				rst 0x28
+				ld (hl), a
+				inc hl
+				jr get_addr_loop
+get_addr_bs		ld a, c
+				cp 0
+				jr z, get_addr_loop
+				ld a, BS
+				rst 0x28
+				dec c
+				dec hl
+				jr get_addr_loop
 get_addr_enter	ld a, c
-		cp 4
-		jr nz, get_addr_loop
-		
-		ld hl, tmp
-		ld b, (hl)
-		inc hl
-		ld c, (hl)
-		ld h, b
-		ld l, c
-		call hex2byte
-		ld (addr_h), a
-		
-		ld hl, tmp+2
-		ld b, (hl)
-		inc hl
-		ld c, (hl)
-		ld h, b
-		ld l, c
-		call hex2byte
-		ld (addr_l), a
-		
-		ld hl, new_line
-		rst 0x20
-		ret
+				cp 4
+				jr nz, get_addr_loop
+				
+				ld hl, tmp
+				ld b, (hl)
+				inc hl
+				ld c, (hl)
+				ld h, b
+				ld l, c
+				call hex2byte
+				ld (addr+1), a
+				
+				ld hl, tmp+2
+				ld b, (hl)
+				inc hl
+				ld c, (hl)
+				ld h, b
+				ld l, c
+				call hex2byte
+				ld (addr), a
+				
+				ld hl, new_line
+				rst 0x20
+				ret
 		
 ;######################################
 		
-get_byte	ld hl, byte_msg
-		rst 0x20
-		ld c, 0		;number of aquired digits
+get_byte		ld hl, byte_msg
+				rst 0x20
+				ld c, 0		;number of aquired digits
 		
-get_byte_loop	ld a, 0
-		rst 0x30
-		cp BS
-		jr z, get_byte_bs
-		cp CR
-		jr z, get_byte_enter
-		cp 'q'
-		jr z, get_byte_abort
-		ld b, a
-		ld a, c
-		cp 2
-		jr z, get_byte_loop
-		ld a, b
-		call ishex
-		jr c, get_byte_loop
-		inc c
-		rst 0x28
-		ld b, a
-		ld a, c
-		cp 2
-		jr z, get_byte_low
-		ld h, b
-		jr get_byte_loop
+get_byte_loop	xor a
+				rst 0x30
+				cp BS
+				jr z, get_byte_bs
+				cp CR
+				jr z, get_byte_enter
+				cp 'q'
+				jr z, get_byte_abort
+				ld b, a
+				ld a, c
+				cp 2
+				jr z, get_byte_loop
+				ld a, b
+				call ishex
+				jr c, get_byte_loop
+				inc c
+				rst 0x28
+				ld b, a
+				ld a, c
+				cp 2
+				jr z, get_byte_low
+				ld h, b
+				jr get_byte_loop
 get_byte_abort	ld hl, abort_msg
-		rst 0x20
-		scf
-		ret
+				rst 0x20
+				scf
+				ret
 get_byte_low	ld l, b
-		jr get_byte_loop
-get_byte_bs	ld a, c
-		cp 0
-		jr z, get_byte_loop
-		ld a, BS
-		rst 0x28
-		dec c
-		jr get_byte_loop
+				jr get_byte_loop
+get_byte_bs		ld a, c
+				cp 0
+				jr z, get_byte_loop
+				ld a, BS
+				rst 0x28
+				dec c
+				jr get_byte_loop
 get_byte_enter	ld a, c
-		cp 2
-		jr nz, get_byte_loop
-		
-		call hex2byte
-		ld (byte_buff), a
-		
-		ld hl, new_line
-		rst 0x20
-		scf
-		ccf
-		ret
+				cp 2
+				jr nz, get_byte_loop
+				
+				call hex2byte
+				ld (byte_buff), a
+				
+				ld hl, new_line
+				rst 0x20
+				scf
+				ccf
+				ret
 		
 ;######################################
 		
 ;general purpose routines
 
-print_addr	ld a, CR
-		rst 0x28
-		ld a, LF
-		rst 0x28
-		ld a, h
-		call byte2hex
-		ld a, b
-		rst 0x28
-		ld a, c
-		rst 0x28
-		ld a, l
-		call byte2hex
-		ld a, b
-		rst 0x28
-		ld a, c
-		rst 0x28
-		ld a, SPACE
-		rst 0x28
-		ret
+print_addr		ld a, CR
+				rst 0x28
+				ld a, LF
+				rst 0x28
+				ld a, h
+				call byte2hex
+				ld a, b
+				rst 0x28
+				ld a, c
+				rst 0x28
+				ld a, l
+				call byte2hex
+				ld a, b
+				rst 0x28
+				ld a, c
+				rst 0x28
+				ld a, SPACE
+				rst 0x28
+				ret
 
 ;######################################
 
 ;converts value in a to hex
 ;returns 2 ascii hex character in bc (b, c) == (high, low)
-byte2hex	ld b, a
-		call nibble2hex
-		ld c, a
-		ld a, b
-		srl a
-		srl a
-		srl a
-		srl a
-		call nibble2hex
-		ld b, a
-		ret
+byte2hex		ld b, a
+				call nibble2hex
+				ld c, a
+				ld a, b
+				srl a
+				srl a
+				srl a
+				srl a
+				call nibble2hex
+				ld b, a
+				ret
 
 ;convers nibble to hex
 ;in a, out a
-nibble2hex	and 0x0F
-		cp 10
-		jr c, nibble2hex_d
-		sub 10
-		add a, 'A'
-		ret
+nibble2hex		and 0x0F
+				cp 10
+				jr c, nibble2hex_d
+				sub 10
+				add a, 'A'
+				ret
 nibble2hex_d	add a, '0'
-		ret
+				ret
 		
 ;######################################
 		
 ;checks if digit is valid hexadecimal
 ;sets carry if not
-ishex		cp '0'
-		jr c, ishex_no
-		cp ':'
-		jr nc, ishex_no_digit
-		scf
-		ccf
-		ret
+ishex			cp '0'
+				jr c, ishex_no
+				cp '9'+1
+				jr nc, ishex_no_digit
+				jr ishex_yes
 ishex_no_digit	cp 'A'
-		jr c, ishex_no
-		cp 'G'
-		jr nc, ishex_lower
-		scf
-		ccf
-		ret
-ishex_lower	cp 'a'
-		jr c, ishex_no
-		cp 'g'
-		jr nc, ishex_no
-		scf
-		ccf
-		ret
-ishex_no	scf
-		ret
+				jr c, ishex_no
+				cp 'F'+1
+				jr nc, ishex_lower
+				jr ishex_yes
+ishex_lower		cp 'a'
+				jr c, ishex_no
+				cp 'f'+1
+				jr nc, ishex_no
+ishex_yes		scf
+				ccf
+				ret
+ishex_no		scf
+				ret
 		
 ;######################################
 
 ;reads hexadecimal value (in HL) to byte (to A)
-hex2byte	push bc
-		ld a, h
-		call hex2nibble
-		sla a
-		sla a
-		sla a
-		sla a
-		ld b, a
-		ld a, l
-		call hex2nibble
-		or b
-		pop bc
-		ret
+hex2byte		push bc
+				ld a, h
+				call hex2nibble
+				sla a
+				sla a
+				sla a
+				sla a
+				ld b, a
+				ld a, l
+				call hex2nibble
+				or b
+				pop bc
+				ret
 		
 ;reads one hexadecimal character	
-hex2nibble	cp 'a'
-		jr nc, hex2nibble_nup
-		cp 'A'
-		jr nc, hex2nibble_up
-		sub '0'
-		ret
+hex2nibble		cp 'a'
+				jr nc, hex2nibble_nup
+				cp 'A'
+				jr nc, hex2nibble_up
+				sub '0'
+				ret
 hex2nibble_nup	sub 'a'
-		add a, 10
-		ret
+				add a, 10
+				ret
 hex2nibble_up	sub 'A'
-		add a, 10
-		ret
+				add a, 10
+				ret
 		
 ;######################################
 
 ;pop received byte from the buffer
 ;if a == 0 wait for data if the buffer is empty
 ;returns received byte in a
-rxd_pop		push bc
-		push hl
+rxd_pop			push bc
+				push hl
 rxd_pop_loop	ld c, a
-		di		;can't allow irq to interrupt us now
-		ld a, (rxd_wptr)
-		ld l, a
-		ld a, (rxd_rptr)
-		cp l
-		jr z, rxd_pop_empty
-		ld b, a
-		ld a, XOFF
-		rst 0x28
-		ld a, b
-		ld h, 0x9E
-		ld l, a
-		ld a, (hl)
-		ei		;reenable interrupts
-		inc l
-		ld b, a
-		ld a, l
-		ld (rxd_rptr), a
-		ld a, b
-rxd_pop_end	pop hl
-		pop bc
-		ret
+				di		;can't allow irq to interrupt us now
+				ld a, (rxd_wptr)
+				ld l, a
+				ld a, (rxd_rptr)
+				cp l
+				jr z, rxd_pop_empty
+				ld b, a
+				ld a, XOFF
+				rst 0x28
+				ld a, b
+				ld h, (rxd_buff>>8) && 0xFF
+				ld l, a
+				ld a, (hl)
+				ei		;reenable interrupts
+				inc l
+				ld b, a
+				ld a, l
+				ld (rxd_rptr), a
+				ld a, b
+rxd_pop_end		pop hl
+				pop bc
+				ret
 rxd_pop_empty	ei
-		ld a, c
-		cp 0
-		jr nz, rxd_pop_end
-		ld a, XON
-		rst 0x28
-		halt	;wait for data
-		jr rxd_pop_loop
+				ld a, c
+				cp 0
+				jr nz, rxd_pop_end
+				ld a, XON
+				rst 0x28
+				halt	;wait for data
+				jr rxd_pop_loop
 		
 ;######################################
 
 ;sends byte in a
-txd		out (UDR), a
-		ret
+txd				out (UDR), a
+				ret
 		
 ;######################################
 
 ;prints string till terminator (\0)
 ;pointer to the string in HL
-print		push af
-print_loop	ld a, (HL)
-		inc hl
-		cp 0
-		jr z, print_end
-		out (UDR), a
-		jr print_loop
-print_end	pop af
-		ret
+print			push af
+print_loop		ld a, (hl)
+				cp 0
+				jr z, print_end
+				inc hl
+				out (UDR), a
+				jr print_loop
+print_end		pop af
+				ret
 		
 ;######################################
 		
 ;constants storage
-welcome_msg 	asc "Z80simple system monitor"
-		asc "A.Kaminski 2016\r\n\0"
+welcome_msg 	asc "Z80simple system monitor\r\n"
+				asc "A.Kaminski 2016\r\n\0"
 
-menu_msg	asc "Avaiable options:"
-		asc "\r\n\th - this help"
-		asc "\r\n\tr - read memory"
-		asc "\r\n\tw - write memory"
-		asc "\r\n\tm - modify memory"
-		asc "\r\n\tx - execute program"
-		asc "\r\n\t: - Intel HEX (just send line)\r\n\0"
+menu_msg		asc "Avaiable options:"
+				asc "\r\n\th - this help"
+				asc "\r\n\tr - read memory"
+				asc "\r\n\tw - write memory"
+				asc "\r\n\tm - modify memory"
+				asc "\r\n\tx - execute program"
+				asc "\r\n\t: - IntelHEX (just send line)\r\n\0"
 
-new_line	asc "\r\n\0"
-	
-invalid_msg	asc "Invalid choice: \r\n\0"
+invalid_msg		asc "Invalid choice: \0"
 		
-address_msg	asc "Input address (hex): \0"
+address_msg		asc "Input address (hex): \0"
 
-byte_msg	asc "Input byte (hex): \0"
+byte_msg		asc "Input byte (hex): \0"
 		
-done_msg	asc "\r\nDone.\r\n\0"
+done_msg		asc "\r\nDone."
+new_line		asc "\r\n\0"
 		
-abort_msg	asc "\r\nAborted.\r\n\0"
+abort_msg		asc "\r\nAborted.\r\n\0"
 
-read_addr_msg	asc "Provide start address for read\r\n\0"
-		
 read_len_msg	asc "Provide number of bytes to read\r\n\0"
-		
-write_addr_msg	asc "Provide start address for write\r\n\0"
-		
-mod_addr_msg	asc "Provide start address for modify\r\n\0"
-		
-exe_addr_msg	asc "Provice start address for execution\r\n\0"
-		
-type_error_msg	asc "\r\nUnexpectected IntelHEX record type.\r\n\0"
 
-checksum_error_msg asc "\r\nChecksum error.\r\n\0"
+addr_msg		asc "Provice start address for \0"
+
+read_msg		asc "read\r\n\0"
 		
-char_error	asc "\r\nReceived non-hex character.\r\n\0"
+write_addr_msg	asc "write\r\n\0"
+		
+mod_addr_msg	asc "modification\r\n\0"
+		
+exe_addr_msg	asc "execution\r\n\0"
+		
+type_error_msg	asc "\r\nUnexpectected record type.\r\n\0"
+
+cs_error_msg 	asc "\r\nChecksum error.\r\n\0"
+		
+char_error		asc "\r\nReceived non-hex character.\r\n\0"
+
+DUMMY
+* = 0x9E00
+rxd_buff		ds 256
+rxd_rptr		ds 1
+rxd_wptr		ds 1
+addr			ds 2
+byte_buff		ds 1
+tmp				ds 4
