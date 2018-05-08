@@ -664,7 +664,7 @@ db CR, LF, 'Z80simple system monitor', CR, LF
 db 'A.Kaminski 2016', CR, LF, 0
 
 menu_msg:
-db 'Avaiable options:'
+db 'Available options:'
 db CR, LF, TAB, 'h - this help'
 db CR, LF, TAB, 'r - read memory'
 db CR, LF, TAB, 'w - write memory'
